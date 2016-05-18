@@ -1,4 +1,4 @@
-/*
+/**
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,137 +14,73 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.commons.vfs2.provider.ftp;
 
-import java.io.DataInputStream;
-import java.io.FilterInputStream;
-import java.io.IOException;
+package org.apache.mahout.cf.taste.impl.model;
 
-import org.apache.commons.vfs2.FileSystemException;
-import org.apache.commons.vfs2.provider.AbstractRandomAccessStreamContent;
-import org.apache.commons.vfs2.util.RandomAccessMode;
+import org.apache.mahout.common.MahoutTestCase;
 
-/**
- * Implements FTP stream-based random access.
- */
-class FtpRandomAccessContent extends AbstractRandomAccessStreamContent
-{
-    protected long filePointer;
+public final class BooleanItemPreferenceArrayTest extends MahoutTestCase {
 
-    private final FtpFileObject fileObject;
-    private DataInputStream dis;
-    private FtpFileObject.FtpInputStream mis;
+  public void testUserID() {
+    BooleanItemPreferenceArray prefs = new BooleanItemPreferenceArray(3);
+    assertEquals(3, prefs.length());
+    prefs.setItemID(0, 1L);
+    assertEquals(1L, prefs.getItemID(0));
+    assertEquals(1L, prefs.getItemID(1));
+    assertEquals(1L, prefs.getItemID(2));
+  }
 
-    FtpRandomAccessContent(final FtpFileObject fileObject, final RandomAccessMode mode)
-    {
-        super(mode);
+  public void testItemID() {
+    BooleanItemPreferenceArray prefs = new BooleanItemPreferenceArray(3);
+    assertEquals(3, prefs.length());
+    prefs.setUserID(0, 1L);
+    prefs.setUserID(1, 2L);
+    prefs.setUserID(2, 3L);
+    assertEquals(1L, prefs.getUserID(0));
+    assertEquals(2L, prefs.getUserID(1));
+    assertEquals(3L, prefs.getUserID(2));
+  }
 
-        this.fileObject = fileObject;
-        // fileSystem = (FtpFileSystem) this.fileObject.getFileSystem();
+  public void testSetValue() {
+    BooleanItemPreferenceArray prefs = new BooleanItemPreferenceArray(3);
+    assertEquals(3, prefs.length());
+    try {
+      prefs.setValue(0, 1.0f);
+      fail("Should have thrown exception");
+    } catch (UnsupportedOperationException uoe) {
+      // good
     }
+    assertEquals(1.0f, prefs.getValue(2));
+  }
 
-    @Override
-    public long getFilePointer() throws IOException
-    {
-        return filePointer;
-    }
+  public void testHasPref() {
+    BooleanItemPreferenceArray prefs = new BooleanItemPreferenceArray(3);
+    prefs.set(0, new GenericPreference(1L, 3L, 5.0f));
+    assertTrue(prefs.hasPrefWithItemID(3L));
+    assertTrue(prefs.hasPrefWithUserID(1L));
+    assertFalse(prefs.hasPrefWithItemID(2L));
+    assertFalse(prefs.hasPrefWithUserID(2L));
+  }
 
-    @Override
-    public void seek(final long pos) throws IOException
-    {
-        if (pos == filePointer)
-        {
-            // no change
-            return;
-        }
+  public void testSort() {
+    BooleanItemPreferenceArray prefs = new BooleanItemPreferenceArray(3);
+    prefs.set(0, new GenericPreference(3L, 1L, 5.0f));
+    prefs.set(1, new GenericPreference(1L, 1L, 5.0f));
+    prefs.set(2, new GenericPreference(2L, 1L, 5.0f));
+    prefs.sortByUser();
+    assertEquals(1L, prefs.getUserID(0));
+    assertEquals(2L, prefs.getUserID(1));
+    assertEquals(3L, prefs.getUserID(2));
+  }
 
-        if (pos < 0)
-        {
-            throw new FileSystemException("vfs.provider/random-access-invalid-position.error",
-                    Long.valueOf(pos));
-        }
-        if (dis != null)
-        {
-            close();
-        }
+  public void testClone() {
+    BooleanItemPreferenceArray prefs = new BooleanItemPreferenceArray(3);
+    prefs.set(0, new BooleanPreference(3L, 1L));
+    prefs.set(1, new BooleanPreference(1L, 1L));
+    prefs.set(2, new BooleanPreference(2L, 1L));
+    prefs = prefs.clone();
+    assertEquals(3L, prefs.getUserID(0));
+    assertEquals(1L, prefs.getItemID(1));
+  }
 
-        filePointer = pos;
-    }
-
-    @Override
-    protected DataInputStream getDataInputStream() throws IOException
-    {
-        if (dis != null)
-        {
-            return dis;
-        }
-
-        // FtpClient client = fileSystem.getClient();
-        mis = fileObject.getInputStream(filePointer);
-        dis = new DataInputStream(new FilterInputStream(mis)
-        {
-            @Override
-            public int read() throws IOException
-            {
-                final int ret = super.read();
-                if (ret > -1)
-                {
-                    filePointer++;
-                }
-                return ret;
-            }
-
-            @Override
-            public int read(final byte[] b) throws IOException
-            {
-                final int ret = super.read(b);
-                if (ret > -1)
-                {
-                    filePointer += ret;
-                }
-                return ret;
-            }
-
-            @Override
-            public int read(final byte[] b, final int off, final int len) throws IOException
-            {
-                final int ret = super.read(b, off, len);
-                if (ret > -1)
-                {
-                    filePointer += ret;
-                }
-                return ret;
-            }
-
-            @Override
-            public void close() throws IOException
-            {
-                FtpRandomAccessContent.this.close();
-            }
-        });
-
-        return dis;
-    }
-
-
-    @Override
-    public void close() throws IOException
-    {
-        if (dis != null)
-        {
-            mis.abort();
-
-            // this is to avoid recursive close
-            final DataInputStream oldDis = dis;
-            dis = null;
-            oldDis.close();
-            mis = null;
-        }
-    }
-
-    @Override
-    public long length() throws IOException
-    {
-        return fileObject.getContent().getSize();
-    }
 }
