@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,73 +14,321 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.commons.validator.routines.checkdigit;
 
-package org.apache.mahout.cf.taste.impl.model;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.util.List;
+import java.util.ArrayList;
 
-import org.apache.mahout.common.MahoutTestCase;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
-public final class BooleanItemPreferenceArrayTest extends MahoutTestCase {
+import junit.framework.TestCase;
 
-  public void testUserID() {
-    BooleanItemPreferenceArray prefs = new BooleanItemPreferenceArray(3);
-    assertEquals(3, prefs.length());
-    prefs.setItemID(0, 1L);
-    assertEquals(1L, prefs.getItemID(0));
-    assertEquals(1L, prefs.getItemID(1));
-    assertEquals(1L, prefs.getItemID(2));
-  }
+/**
+ * Luhn Check Digit Test.
+ *
+ * @version $Revision$
+ * @since Validator 1.4
+ */
+public abstract class AbstractCheckDigitTest extends TestCase {
 
-  public void testItemID() {
-    BooleanItemPreferenceArray prefs = new BooleanItemPreferenceArray(3);
-    assertEquals(3, prefs.length());
-    prefs.setUserID(0, 1L);
-    prefs.setUserID(1, 2L);
-    prefs.setUserID(2, 3L);
-    assertEquals(1L, prefs.getUserID(0));
-    assertEquals(2L, prefs.getUserID(1));
-    assertEquals(3L, prefs.getUserID(2));
-  }
+    /** logging instance */
+    protected Log log = LogFactory.getLog(getClass());
 
-  public void testSetValue() {
-    BooleanItemPreferenceArray prefs = new BooleanItemPreferenceArray(3);
-    assertEquals(3, prefs.length());
-    try {
-      prefs.setValue(0, 1.0f);
-      fail("Should have thrown exception");
-    } catch (UnsupportedOperationException uoe) {
-      // good
+    /** Check digit routine being tested */
+    protected int checkDigitLth = 1;
+
+    /** Check digit routine being tested */
+    protected CheckDigit routine;
+
+    /**
+     * Array of valid code values
+     * These must contain valid strings *including* the check digit.
+     *
+     * They are passed to:
+     * CheckDigit.isValid(expects string including checkdigit)
+     * which is expected to return true
+     * and
+     * AbstractCheckDigitTest.createInvalidCodes() which
+     * mangles the last character to check that the result is now invalid.
+     * and
+     * the truncated string is passed to
+     * CheckDigit.calculate(expects string without checkdigit)
+     * the result is compared with the last character
+     */
+    protected String[] valid;
+
+    /**
+     * Array of invalid code values
+     *
+     * These are currently passed to both 
+     * CheckDigit.calculate(expects a string without checkdigit)
+     * which is expected to throw an exception
+     * However that only applies if the string is syntactically incorrect;
+     * and
+     * CheckDigit.isValid(expects a string including checkdigit)
+     * which is expected to return false
+     *
+     * See https://issues.apache.org/jira/browse/VALIDATOR-344 for some dicussion on this 
+     */
+    protected String[] invalid = new String[] {"12345678A"};
+
+    /** code value which sums to zero */
+    protected String zeroSum = "0000000000";
+
+    /** Prefix for error messages */
+    protected String missingMessage = "Code is missing";
+
+    /**
+     * Constructor
+     * @param name test name
+     */
+    public AbstractCheckDigitTest(String name) {
+        super(name);
     }
-    assertEquals(1.0f, prefs.getValue(2));
-  }
 
-  public void testHasPref() {
-    BooleanItemPreferenceArray prefs = new BooleanItemPreferenceArray(3);
-    prefs.set(0, new GenericPreference(1L, 3L, 5.0f));
-    assertTrue(prefs.hasPrefWithItemID(3L));
-    assertTrue(prefs.hasPrefWithUserID(1L));
-    assertFalse(prefs.hasPrefWithItemID(2L));
-    assertFalse(prefs.hasPrefWithUserID(2L));
-  }
+    /**
+     * Tear Down - clears routine and valid codes.
+     */
+    @Override
+    protected void tearDown() throws Exception {
+        super.tearDown();
+        valid = null;
+        routine = null;
+    }
 
-  public void testSort() {
-    BooleanItemPreferenceArray prefs = new BooleanItemPreferenceArray(3);
-    prefs.set(0, new GenericPreference(3L, 1L, 5.0f));
-    prefs.set(1, new GenericPreference(1L, 1L, 5.0f));
-    prefs.set(2, new GenericPreference(2L, 1L, 5.0f));
-    prefs.sortByUser();
-    assertEquals(1L, prefs.getUserID(0));
-    assertEquals(2L, prefs.getUserID(1));
-    assertEquals(3L, prefs.getUserID(2));
-  }
+    /**
+     * Test isValid() for valid values.
+     */
+    public void testIsValidTrue() {
+        if (log.isDebugEnabled()) {
+            log.debug("testIsValidTrue() for " + routine.getClass().getName());
+        }
 
-  public void testClone() {
-    BooleanItemPreferenceArray prefs = new BooleanItemPreferenceArray(3);
-    prefs.set(0, new BooleanPreference(3L, 1L));
-    prefs.set(1, new BooleanPreference(1L, 1L));
-    prefs.set(2, new BooleanPreference(2L, 1L));
-    prefs = prefs.clone();
-    assertEquals(3L, prefs.getUserID(0));
-    assertEquals(1L, prefs.getItemID(1));
-  }
+        // test valid values
+        for (int i = 0; i < valid.length; i++) {
+            if (log.isDebugEnabled()) {
+                log.debug("   " + i + " Testing Valid Code=[" + valid[i] + "]");
+            }
+            assertTrue("valid[" + i +"]: " + valid[i], routine.isValid(valid[i]));
+        }
+    }
+
+    /**
+     * Test isValid() for invalid values.
+     */
+    public void testIsValidFalse() {
+        if (log.isDebugEnabled()) {
+            log.debug("testIsValidFalse() for " + routine.getClass().getName());
+        }
+
+        // test invalid code values
+        for (int i = 0; i < invalid.length; i++) {
+            if (log.isDebugEnabled()) {
+                log.debug("   " + i + " Testing Invalid Code=[" + invalid[i] + "]");
+            }
+            assertFalse("invalid[" + i +"]: " + invalid[i], routine.isValid(invalid[i]));
+        }
+
+        // test invalid check digit values
+        String[] invalidCheckDigits = createInvalidCodes(valid);
+        for (int i = 0; i < invalidCheckDigits.length; i++) {
+            if (log.isDebugEnabled()) {
+                log.debug("   " + i + " Testing Invalid Check Digit, Code=[" + invalidCheckDigits[i] + "]");
+            }
+            assertFalse("invalid check digit[" + i +"]: " + invalidCheckDigits[i], routine.isValid(invalidCheckDigits[i]));
+        }
+    }
+
+    /**
+     * Test calculate() for valid values.
+     */
+    public void testCalculateValid() {
+        if (log.isDebugEnabled()) {
+            log.debug("testCalculateValid() for " + routine.getClass().getName());
+        }
+
+        // test valid values
+        for (int i = 0; i < valid.length; i++) {
+            String code = removeCheckDigit(valid[i]);
+            String expected = checkDigit(valid[i]);
+            try {
+                if (log.isDebugEnabled()) {
+                    log.debug("   " + i + " Testing Valid Check Digit, Code=[" + code + "] expected=[" + expected + "]");
+                }
+                assertEquals("valid[" + i +"]: " + valid[i], expected, routine.calculate(code));
+            } catch (Exception e) {
+                fail("valid[" + i +"]=" + valid[i] + " threw " + e);
+            }
+        }
+
+    }
+
+    /**
+     * Test calculate() for invalid values.
+     */
+    public void testCalculateInvalid() {
+
+        if (log.isDebugEnabled()) {
+            log.debug("testCalculateInvalid() for " + routine.getClass().getName());
+        }
+
+        // test invalid code values
+        for (int i = 0; i < invalid.length; i++) {
+            try {
+                final String code = invalid[i];
+                if (log.isDebugEnabled()) {
+                    log.debug("   " + i + " Testing Invalid Check Digit, Code=[" + code + "]");
+                }
+                String expected = checkDigit(code);
+                String actual = routine.calculate(removeCheckDigit(code));
+                // If exception not thrown, check that the digit is incorrect instead
+                if (expected.equals(actual)) {
+                    fail("Expected mismatch for " + code + " expected " + expected + " actual " + actual);
+                }
+            } catch (CheckDigitException e) {
+                // possible failure messages:
+                // Invalid ISBN Length ...
+                // Invalid Character[ ...
+                // Are there any others?
+                assertTrue("Invalid Character[" +i +"]=" +  e.getMessage(), e.getMessage().startsWith("Invalid "));
+// WAS                assertTrue("Invalid Character[" +i +"]=" +  e.getMessage(), e.getMessage().startsWith("Invalid Character["));
+            }
+        }
+    }
+
+    /**
+     * Test missing code
+     */
+    public void testMissingCode() {
+
+        // isValid() null
+        assertFalse("isValid() Null", routine.isValid(null));
+
+        // isValid() zero length
+        assertFalse("isValid() Zero Length", routine.isValid(""));
+
+        // isValid() length 1
+        // Don't use 0, because that passes for Verhoef (not sure why yet)
+        assertFalse("isValid() Length 1", routine.isValid("9"));
+
+        // calculate() null
+        try {
+            routine.calculate(null);
+            fail("calculate() Null - expected exception");
+        } catch (Exception e) {
+            assertEquals("calculate() Null", missingMessage, e.getMessage());
+        }
+
+        // calculate() zero length
+        try {
+            routine.calculate("");
+            fail("calculate() Zero Length - expected exception");
+        } catch (Exception e) {
+            assertEquals("calculate() Zero Length",  missingMessage, e.getMessage());
+        }
+    }
+
+    /**
+     * Test zero sum
+     */
+    public void testZeroSum() {
+        
+        assertFalse("isValid() Zero Sum", routine.isValid(zeroSum));
+
+        try {
+            routine.calculate(zeroSum);
+            fail("Zero Sum - expected exception");
+        } catch (Exception e) {
+            assertEquals("isValid() Zero Sum",  "Invalid code, sum is zero", e.getMessage());
+        }
+
+    }
+
+    /**
+     * Test check digit serialization.
+     */
+    public void testSerialization() {
+        // Serialize the check digit routine
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try {
+            ObjectOutputStream oos = new ObjectOutputStream(baos);
+            oos.writeObject(routine);
+            oos.flush();
+            oos.close();
+        } catch (Exception e) {
+            fail(routine.getClass().getName() + " error during serialization: " + e);
+        }
+
+        // Deserialize the test object
+        Object result = null;
+        try {
+            ByteArrayInputStream bais =
+                new ByteArrayInputStream(baos.toByteArray());
+            ObjectInputStream ois = new ObjectInputStream(bais);
+            result = ois.readObject();
+            bais.close();
+        } catch (Exception e) {
+            fail(routine.getClass().getName() + " error during deserialization: " + e);
+        }
+        assertNotNull(result);
+    }
+
+    private static final String POSSIBLE_CHECK_DIGITS = "0123456789 ABCDEFHIJKLMNOPQRSTUVWXYZ\tabcdefghijklmnopqrstuvwxyz!@£$%^&*()_+";
+//    private static final String POSSIBLE_CHECK_DIGITS = "0123456789";
+    /**
+     * Returns an array of codes with invalid check digits.
+     *
+     * @param codes Codes with valid check digits
+     * @return Codes with invalid check digits
+     */
+    protected String[] createInvalidCodes(String[] codes) {
+        List<String> list = new ArrayList<String>();
+
+        // create invalid check digit values
+        for (String fullCode : codes) {
+            String code = removeCheckDigit(fullCode);
+            String check = checkDigit(fullCode);
+            for (int j = 0; j < POSSIBLE_CHECK_DIGITS.length(); j++) {
+                String curr = POSSIBLE_CHECK_DIGITS.substring(j, j + 1);//"" + Character.forDigit(j, 10);
+                if (!curr.equals(check)) {
+                    list.add(code + curr);
+                }
+            }
+        }
+        
+        return list.toArray(new String[list.size()]);
+    }
+
+    /**
+     * Returns a code with the Check Digit (i.e. last character) removed.
+     *
+     * @param code The code
+     * @return The code without the check digit
+     */
+    protected String removeCheckDigit(String code) {
+        if (code == null || code.length() <= checkDigitLth) {
+            return null;
+        }
+        return code.substring(0, code.length() - checkDigitLth);
+    }
+
+    /**
+     * Returns the check digit (i.e. last character) for a code.
+     *
+     * @param code The code
+     * @return The check digit
+     */
+    protected String checkDigit(String code) {
+        if (code == null || code.length() <= checkDigitLth) {
+            return "";
+        }
+        int start = code.length() - checkDigitLth;
+        return code.substring(start);
+    }
 
 }
