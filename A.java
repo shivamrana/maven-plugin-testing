@@ -1,334 +1,378 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-package org.apache.commons.validator.routines.checkdigit;
+Copyright � 1999 CERN - European Organization for Nuclear Research.
+Permission to use, copy, modify, distribute and sell this software and its documentation for any purpose 
+is hereby granted without fee, provided that the above copyright notice appear in all copies and 
+that both that copyright notice and this permission notice appear in supporting documentation. 
+CERN makes no representations about the suitability of this software for any purpose. 
+It is provided "as is" without expressed or implied warranty.
+*/
+package org.apache.mahout.math.matrix.impl;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.util.List;
-import java.util.ArrayList;
-
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-
-import junit.framework.TestCase;
+import org.apache.mahout.math.matrix.DoubleMatrix2D;
+import org.apache.mahout.math.matrix.DoubleMatrix3D;
 
 /**
- * Luhn Check Digit Test.
+ * Selection view on dense 3-d matrices holding <tt>double</tt> elements. First see the <a
+ * href="package-summary.html">package summary</a> and javadoc <a href="package-tree.html">tree view</a> to get the
+ * broad picture. <p> <b>Implementation:</b> <p> Objects of this class are typically constructed via
+ * <tt>viewIndexes</tt> methods on some source matrix. The interface introduced in abstract super classes defines
+ * everything a user can do. From a user point of view there is nothing special about this class; it presents the same
+ * functionality with the same signatures and semantics as its abstract superclass(es) while introducing no additional
+ * functionality. Thus, this class need not be visible to users. By the way, the same principle applies to concrete
+ * DenseXXX and SparseXXX classes: they presents the same functionality with the same signatures and semantics as
+ * abstract superclass(es) while introducing no additional functionality. Thus, they need not be visible to users,
+ * either. Factory methods could hide all these concrete types. <p> This class uses no delegation. Its instances point
+ * directly to the data. Cell addressing overhead is is 1 additional int addition and 3 additional array index accesses
+ * per get/set. <p> Note that this implementation is not synchronized. <p> <b>Memory requirements:</b> <p> <tt>memory
+ * [bytes] = 4*(sliceIndexes.length+rowIndexes.length+columnIndexes.length)</tt>. Thus, an index view with 100 x 100 x
+ * 100 indexes additionally uses 8 KB. <p> <b>Time complexity:</b> <p> Depends on the parent view holding cells. <p>
  *
- * @version $Revision$
- * @since Validator 1.4
+ * @author wolfgang.hoschek@cern.ch
+ * @version 1.0, 09/24/99
  */
-public abstract class AbstractCheckDigitTest extends TestCase {
+class SelectedDenseDoubleMatrix3D extends DoubleMatrix3D {
 
-    /** logging instance */
-    protected Log log = LogFactory.getLog(getClass());
+  /** The elements of this matrix. */
+  protected final double[] elements;
 
-    /** Check digit routine being tested */
-    protected int checkDigitLth = 1;
+  /** The offsets of the visible cells of this matrix. */
+  private int[] sliceOffsets;
+  private int[] rowOffsets;
+  private int[] columnOffsets;
 
-    /** Check digit routine being tested */
-    protected CheckDigit routine;
+  /** The offset. */
+  private int offset;
 
-    /**
-     * Array of valid code values
-     * These must contain valid strings *including* the check digit.
-     *
-     * They are passed to:
-     * CheckDigit.isValid(expects string including checkdigit)
-     * which is expected to return true
-     * and
-     * AbstractCheckDigitTest.createInvalidCodes() which
-     * mangles the last character to check that the result is now invalid.
-     * and
-     * the truncated string is passed to
-     * CheckDigit.calculate(expects string without checkdigit)
-     * the result is compared with the last character
-     */
-    protected String[] valid;
+  /**
+   * Constructs a matrix view with the given parameters.
+   *
+   * @param elements      the cells.
+   * @param sliceOffsets  The slice offsets of the cells that shall be visible.
+   * @param rowOffsets    The row offsets of the cells that shall be visible.
+   * @param columnOffsets The column offsets of the cells that shall be visible.
+   */
+  protected SelectedDenseDoubleMatrix3D(double[] elements, int[] sliceOffsets, int[] rowOffsets, int[] columnOffsets,
+                                        int offset) {
+    // be sure parameters are valid, we do not check...
+    int slices = sliceOffsets.length;
+    int rows = rowOffsets.length;
+    int columns = columnOffsets.length;
+    setUp(slices, rows, columns);
 
-    /**
-     * Array of invalid code values
-     *
-     * These are currently passed to both 
-     * CheckDigit.calculate(expects a string without checkdigit)
-     * which is expected to throw an exception
-     * However that only applies if the string is syntactically incorrect;
-     * and
-     * CheckDigit.isValid(expects a string including checkdigit)
-     * which is expected to return false
-     *
-     * See https://issues.apache.org/jira/browse/VALIDATOR-344 for some dicussion on this 
-     */
-    protected String[] invalid = new String[] {"12345678A"};
+    this.elements = elements;
 
-    /** code value which sums to zero */
-    protected String zeroSum = "0000000000";
+    this.sliceOffsets = sliceOffsets;
+    this.rowOffsets = rowOffsets;
+    this.columnOffsets = columnOffsets;
 
-    /** Prefix for error messages */
-    protected String missingMessage = "Code is missing";
+    this.offset = offset;
 
-    /**
-     * Constructor
-     * @param name test name
-     */
-    public AbstractCheckDigitTest(String name) {
-        super(name);
+    this.isNoView = false;
+  }
+
+  /**
+   * Returns the position of the given absolute rank within the (virtual or non-virtual) internal 1-dimensional array.
+   * Default implementation. Override, if necessary.
+   *
+   * @param absRank the absolute rank of the element.
+   * @return the position.
+   */
+  @Override
+  protected int _columnOffset(int absRank) {
+    return columnOffsets[absRank];
+  }
+
+  /**
+   * Returns the position of the given absolute rank within the (virtual or non-virtual) internal 1-dimensional array.
+   * Default implementation. Override, if necessary.
+   *
+   * @param absRank the absolute rank of the element.
+   * @return the position.
+   */
+  @Override
+  protected int _rowOffset(int absRank) {
+    return rowOffsets[absRank];
+  }
+
+  /**
+   * Returns the position of the given absolute rank within the (virtual or non-virtual) internal 1-dimensional array.
+   * Default implementation. Override, if necessary.
+   *
+   * @param absRank the absolute rank of the element.
+   * @return the position.
+   */
+  @Override
+  protected int _sliceOffset(int absRank) {
+    return sliceOffsets[absRank];
+  }
+
+  /**
+   * Returns the matrix cell value at coordinate <tt>[slice,row,column]</tt>.
+   *
+   * <p>Provided with invalid parameters this method may return invalid objects without throwing any exception. <b>You
+   * should only use this method when you are absolutely sure that the coordinate is within bounds.</b> Precondition
+   * (unchecked): <tt>slice&lt;0 || slice&gt;=slices() || row&lt;0 || row&gt;=rows() || column&lt;0 ||
+   * column&gt;=column()</tt>.
+   *
+   * @param slice  the index of the slice-coordinate.
+   * @param row    the index of the row-coordinate.
+   * @param column the index of the column-coordinate.
+   * @return the value at the specified coordinate.
+   */
+  @Override
+  public double getQuick(int slice, int row, int column) {
+    //if (debug) if (slice<0 || slice>=slices || row<0 || row>=rows || column<0 || column>=columns) throw new IndexOutOfBoundsException("slice:"+slice+", row:"+row+", column:"+column);
+    //return elements[index(slice,row,column)];
+    //manually inlined:
+    return elements[offset + sliceOffsets[sliceZero + slice * sliceStride] + rowOffsets[rowZero + row * rowStride] +
+        columnOffsets[columnZero + column * columnStride]];
+  }
+
+  /**
+   * Returns <tt>true</tt> if both matrices share common cells. More formally, returns <tt>true</tt> if <tt>other !=
+   * null</tt> and at least one of the following conditions is met <ul> <li>the receiver is a view of the other matrix
+   * <li>the other matrix is a view of the receiver <li><tt>this == other</tt> </ul>
+   */
+  @Override
+  protected boolean haveSharedCellsRaw(DoubleMatrix3D other) {
+    if (other instanceof SelectedDenseDoubleMatrix3D) {
+      SelectedDenseDoubleMatrix3D otherMatrix = (SelectedDenseDoubleMatrix3D) other;
+      return this.elements == otherMatrix.elements;
+    } else if (other instanceof DenseDoubleMatrix3D) {
+      DenseDoubleMatrix3D otherMatrix = (DenseDoubleMatrix3D) other;
+      return this.elements == otherMatrix.elements;
     }
+    return false;
+  }
 
-    /**
-     * Tear Down - clears routine and valid codes.
-     */
-    @Override
-    protected void tearDown() throws Exception {
-        super.tearDown();
-        valid = null;
-        routine = null;
-    }
+  /**
+   * Returns the position of the given coordinate within the (virtual or non-virtual) internal 1-dimensional array.
+   *
+   * @param slice  the index of the slice-coordinate.
+   * @param row    the index of the row-coordinate.
+   * @param column the index of the third-coordinate.
+   */
+  @Override
+  protected int index(int slice, int row, int column) {
+    //return this.offset + super.index(slice,row,column);
+    //manually inlined:
+    return this.offset + sliceOffsets[sliceZero + slice * sliceStride] + rowOffsets[rowZero + row * rowStride] +
+        columnOffsets[columnZero + column * columnStride];
+  }
 
-    /**
-     * Test isValid() for valid values.
-     */
-    public void testIsValidTrue() {
-        if (log.isDebugEnabled()) {
-            log.debug("testIsValidTrue() for " + routine.getClass().getName());
-        }
+  /**
+   * Construct and returns a new empty matrix <i>of the same dynamic type</i> as the receiver, having the specified
+   * number of slices, rows and columns. For example, if the receiver is an instance of type
+   * <tt>DenseDoubleMatrix3D</tt> the new matrix must also be of type <tt>DenseDoubleMatrix3D</tt>, if the receiver is
+   * an instance of type <tt>SparseDoubleMatrix3D</tt> the new matrix must also be of type
+   * <tt>SparseDoubleMatrix3D</tt>, etc. In general, the new matrix should have internal parametrization as similar as
+   * possible.
+   *
+   * @param slices  the number of slices the matrix shall have.
+   * @param rows    the number of rows the matrix shall have.
+   * @param columns the number of columns the matrix shall have.
+   * @return a new empty matrix of the same dynamic type.
+   */
+  @Override
+  public DoubleMatrix3D like(int slices, int rows, int columns) {
+    return new DenseDoubleMatrix3D(slices, rows, columns);
+  }
 
-        // test valid values
-        for (int i = 0; i < valid.length; i++) {
-            if (log.isDebugEnabled()) {
-                log.debug("   " + i + " Testing Valid Code=[" + valid[i] + "]");
-            }
-            assertTrue("valid[" + i +"]: " + valid[i], routine.isValid(valid[i]));
-        }
-    }
+  /**
+   * Construct and returns a new 2-d matrix <i>of the corresponding dynamic type</i>, sharing the same cells. For
+   * example, if the receiver is an instance of type <tt>DenseDoubleMatrix3D</tt> the new matrix must also be of type
+   * <tt>DenseDoubleMatrix2D</tt>, if the receiver is an instance of type <tt>SparseDoubleMatrix3D</tt> the new matrix
+   * must also be of type <tt>SparseDoubleMatrix2D</tt>, etc.
+   *
+   * @param rows         the number of rows the matrix shall have.
+   * @param columns      the number of columns the matrix shall have.
+   * @param rowZero      the position of the first element.
+   * @param columnZero   the position of the first element.
+   * @param rowStride    the number of elements between two rows, i.e. <tt>index(i+1,j)-index(i,j)</tt>.
+   * @param columnStride the number of elements between two columns, i.e. <tt>index(i,j+1)-index(i,j)</tt>.
+   * @return a new matrix of the corresponding dynamic type.
+   */
+  @Override
+  protected DoubleMatrix2D like2D(int rows, int columns, int rowZero, int columnZero, int rowStride, int columnStride) {
+    throw new InternalError(); // this method is never called since viewRow() and viewColumn are overridden properly.
+  }
 
-    /**
-     * Test isValid() for invalid values.
-     */
-    public void testIsValidFalse() {
-        if (log.isDebugEnabled()) {
-            log.debug("testIsValidFalse() for " + routine.getClass().getName());
-        }
+  /**
+   * Sets the matrix cell at coordinate <tt>[slice,row,column]</tt> to the specified value.
+   *
+   * <p>Provided with invalid parameters this method may access illegal indexes without throwing any exception. <b>You
+   * should only use this method when you are absolutely sure that the coordinate is within bounds.</b> Precondition
+   * (unchecked): <tt>slice&lt;0 || slice&gt;=slices() || row&lt;0 || row&gt;=rows() || column&lt;0 ||
+   * column&gt;=column()</tt>.
+   *
+   * @param slice  the index of the slice-coordinate.
+   * @param row    the index of the row-coordinate.
+   * @param column the index of the column-coordinate.
+   * @param value  the value to be filled into the specified cell.
+   */
+  @Override
+  public void setQuick(int slice, int row, int column, double value) {
+    //if (debug) if (slice<0 || slice>=slices || row<0 || row>=rows || column<0 || column>=columns) throw new IndexOutOfBoundsException("slice:"+slice+", row:"+row+", column:"+column);
+    //elements[index(slice,row,column)] = value;
+    //manually inlined:
+    elements[offset + sliceOffsets[sliceZero + slice * sliceStride] + rowOffsets[rowZero + row * rowStride] +
+        columnOffsets[columnZero + column * columnStride]] = value;
+  }
 
-        // test invalid code values
-        for (int i = 0; i < invalid.length; i++) {
-            if (log.isDebugEnabled()) {
-                log.debug("   " + i + " Testing Invalid Code=[" + invalid[i] + "]");
-            }
-            assertFalse("invalid[" + i +"]: " + invalid[i], routine.isValid(invalid[i]));
-        }
+  /**
+   * Sets up a matrix with a given number of slices and rows.
+   *
+   * @param slices  the number of slices the matrix shall have.
+   * @param rows    the number of rows the matrix shall have.
+   * @param columns the number of columns the matrix shall have.
+   * @throws IllegalArgumentException if <tt>(double)rows*slices > Integer.MAX_VALUE</tt>.
+   */
+  @Override
+  protected void setUp(int slices, int rows, int columns) {
+    super.setUp(slices, rows, columns);
+    this.sliceStride = 1;
+    this.rowStride = 1;
+    this.columnStride = 1;
+    this.offset = 0;
+  }
 
-        // test invalid check digit values
-        String[] invalidCheckDigits = createInvalidCodes(valid);
-        for (int i = 0; i < invalidCheckDigits.length; i++) {
-            if (log.isDebugEnabled()) {
-                log.debug("   " + i + " Testing Invalid Check Digit, Code=[" + invalidCheckDigits[i] + "]");
-            }
-            assertFalse("invalid check digit[" + i +"]: " + invalidCheckDigits[i], routine.isValid(invalidCheckDigits[i]));
-        }
-    }
+  /**
+   * Self modifying version of viewDice().
+   *
+   * @throws IllegalArgumentException if some of the parameters are equal or not in range 0..2.
+   */
+  @Override
+  protected AbstractMatrix3D vDice(int axis0, int axis1, int axis2) {
+    super.vDice(axis0, axis1, axis2);
 
-    /**
-     * Test calculate() for valid values.
-     */
-    public void testCalculateValid() {
-        if (log.isDebugEnabled()) {
-            log.debug("testCalculateValid() for " + routine.getClass().getName());
-        }
+    // swap offsets
+    int[][] offsets = new int[3][];
+    offsets[0] = this.sliceOffsets;
+    offsets[1] = this.rowOffsets;
+    offsets[2] = this.columnOffsets;
 
-        // test valid values
-        for (int i = 0; i < valid.length; i++) {
-            String code = removeCheckDigit(valid[i]);
-            String expected = checkDigit(valid[i]);
-            try {
-                if (log.isDebugEnabled()) {
-                    log.debug("   " + i + " Testing Valid Check Digit, Code=[" + code + "] expected=[" + expected + "]");
-                }
-                assertEquals("valid[" + i +"]: " + valid[i], expected, routine.calculate(code));
-            } catch (Exception e) {
-                fail("valid[" + i +"]=" + valid[i] + " threw " + e);
-            }
-        }
+    this.sliceOffsets = offsets[axis0];
+    this.rowOffsets = offsets[axis1];
+    this.columnOffsets = offsets[axis2];
 
-    }
+    return this;
+  }
 
-    /**
-     * Test calculate() for invalid values.
-     */
-    public void testCalculateInvalid() {
+  /**
+   * Constructs and returns a new 2-dimensional <i>slice view</i> representing the slices and rows of the given column.
+   * The returned view is backed by this matrix, so changes in the returned view are reflected in this matrix, and
+   * vice-versa. <p> To obtain a slice view on subranges, construct a sub-ranging view (<tt>view().part(...)</tt>), then
+   * apply this method to the sub-range view. To obtain 1-dimensional views, apply this method, then apply another slice
+   * view (methods <tt>viewColumn</tt>, <tt>viewRow</tt>) on the intermediate 2-dimensional view. To obtain
+   * 1-dimensional views on subranges, apply both steps.
+   *
+   * @param column the index of the column to fix.
+   * @return a new 2-dimensional slice view.
+   * @throws IndexOutOfBoundsException if <tt>column < 0 || column >= columns()</tt>.
+   * @see #viewSlice(int)
+   * @see #viewRow(int)
+   */
+  @Override
+  public DoubleMatrix2D viewColumn(int column) {
+    checkColumn(column);
 
-        if (log.isDebugEnabled()) {
-            log.debug("testCalculateInvalid() for " + routine.getClass().getName());
-        }
+    int viewRows = this.slices;
+    int viewColumns = this.rows;
 
-        // test invalid code values
-        for (int i = 0; i < invalid.length; i++) {
-            try {
-                final String code = invalid[i];
-                if (log.isDebugEnabled()) {
-                    log.debug("   " + i + " Testing Invalid Check Digit, Code=[" + code + "]");
-                }
-                String expected = checkDigit(code);
-                String actual = routine.calculate(removeCheckDigit(code));
-                // If exception not thrown, check that the digit is incorrect instead
-                if (expected.equals(actual)) {
-                    fail("Expected mismatch for " + code + " expected " + expected + " actual " + actual);
-                }
-            } catch (CheckDigitException e) {
-                // possible failure messages:
-                // Invalid ISBN Length ...
-                // Invalid Character[ ...
-                // Are there any others?
-                assertTrue("Invalid Character[" +i +"]=" +  e.getMessage(), e.getMessage().startsWith("Invalid "));
-// WAS                assertTrue("Invalid Character[" +i +"]=" +  e.getMessage(), e.getMessage().startsWith("Invalid Character["));
-            }
-        }
-    }
+    int viewRowZero = sliceZero;
+    int viewColumnZero = rowZero;
+    int viewOffset = this.offset + _columnOffset(_columnRank(column));
 
-    /**
-     * Test missing code
-     */
-    public void testMissingCode() {
+    int viewRowStride = this.sliceStride;
+    int viewColumnStride = this.rowStride;
 
-        // isValid() null
-        assertFalse("isValid() Null", routine.isValid(null));
+    int[] viewRowOffsets = this.sliceOffsets;
+    int[] viewColumnOffsets = this.rowOffsets;
 
-        // isValid() zero length
-        assertFalse("isValid() Zero Length", routine.isValid(""));
+    return new SelectedDenseDoubleMatrix2D(viewRows, viewColumns, this.elements, viewRowZero, viewColumnZero,
+        viewRowStride, viewColumnStride, viewRowOffsets, viewColumnOffsets, viewOffset);
+  }
 
-        // isValid() length 1
-        // Don't use 0, because that passes for Verhoef (not sure why yet)
-        assertFalse("isValid() Length 1", routine.isValid("9"));
+  /**
+   * Constructs and returns a new 2-dimensional <i>slice view</i> representing the slices and columns of the given row.
+   * The returned view is backed by this matrix, so changes in the returned view are reflected in this matrix, and
+   * vice-versa. <p> To obtain a slice view on subranges, construct a sub-ranging view (<tt>view().part(...)</tt>), then
+   * apply this method to the sub-range view. To obtain 1-dimensional views, apply this method, then apply another slice
+   * view (methods <tt>viewColumn</tt>, <tt>viewRow</tt>) on the intermediate 2-dimensional view. To obtain
+   * 1-dimensional views on subranges, apply both steps.
+   *
+   * @param row the index of the row to fix.
+   * @return a new 2-dimensional slice view.
+   * @throws IndexOutOfBoundsException if <tt>row < 0 || row >= row()</tt>.
+   * @see #viewSlice(int)
+   * @see #viewColumn(int)
+   */
+  @Override
+  public DoubleMatrix2D viewRow(int row) {
+    checkRow(row);
 
-        // calculate() null
-        try {
-            routine.calculate(null);
-            fail("calculate() Null - expected exception");
-        } catch (Exception e) {
-            assertEquals("calculate() Null", missingMessage, e.getMessage());
-        }
+    int viewRows = this.slices;
+    int viewColumns = this.columns;
 
-        // calculate() zero length
-        try {
-            routine.calculate("");
-            fail("calculate() Zero Length - expected exception");
-        } catch (Exception e) {
-            assertEquals("calculate() Zero Length",  missingMessage, e.getMessage());
-        }
-    }
+    int viewRowZero = sliceZero;
+    int viewColumnZero = columnZero;
+    int viewOffset = this.offset + _rowOffset(_rowRank(row));
 
-    /**
-     * Test zero sum
-     */
-    public void testZeroSum() {
-        
-        assertFalse("isValid() Zero Sum", routine.isValid(zeroSum));
+    int viewRowStride = this.sliceStride;
+    int viewColumnStride = this.columnStride;
 
-        try {
-            routine.calculate(zeroSum);
-            fail("Zero Sum - expected exception");
-        } catch (Exception e) {
-            assertEquals("isValid() Zero Sum",  "Invalid code, sum is zero", e.getMessage());
-        }
+    int[] viewRowOffsets = this.sliceOffsets;
+    int[] viewColumnOffsets = this.columnOffsets;
 
-    }
+    return new SelectedDenseDoubleMatrix2D(viewRows, viewColumns, this.elements, viewRowZero, viewColumnZero,
+        viewRowStride, viewColumnStride, viewRowOffsets, viewColumnOffsets, viewOffset);
+  }
 
-    /**
-     * Test check digit serialization.
-     */
-    public void testSerialization() {
-        // Serialize the check digit routine
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        try {
-            ObjectOutputStream oos = new ObjectOutputStream(baos);
-            oos.writeObject(routine);
-            oos.flush();
-            oos.close();
-        } catch (Exception e) {
-            fail(routine.getClass().getName() + " error during serialization: " + e);
-        }
+  /**
+   * Construct and returns a new selection view.
+   *
+   * @param sliceOffsets  the offsets of the visible elements.
+   * @param rowOffsets    the offsets of the visible elements.
+   * @param columnOffsets the offsets of the visible elements.
+   * @return a new view.
+   */
+  @Override
+  protected DoubleMatrix3D viewSelectionLike(int[] sliceOffsets, int[] rowOffsets, int[] columnOffsets) {
+    return new SelectedDenseDoubleMatrix3D(this.elements, sliceOffsets, rowOffsets, columnOffsets, this.offset);
+  }
 
-        // Deserialize the test object
-        Object result = null;
-        try {
-            ByteArrayInputStream bais =
-                new ByteArrayInputStream(baos.toByteArray());
-            ObjectInputStream ois = new ObjectInputStream(bais);
-            result = ois.readObject();
-            bais.close();
-        } catch (Exception e) {
-            fail(routine.getClass().getName() + " error during deserialization: " + e);
-        }
-        assertNotNull(result);
-    }
+  /**
+   * Constructs and returns a new 2-dimensional <i>slice view</i> representing the rows and columns of the given slice.
+   * The returned view is backed by this matrix, so changes in the returned view are reflected in this matrix, and
+   * vice-versa. <p> To obtain a slice view on subranges, construct a sub-ranging view (<tt>view().part(...)</tt>), then
+   * apply this method to the sub-range view. To obtain 1-dimensional views, apply this method, then apply another slice
+   * view (methods <tt>viewColumn</tt>, <tt>viewRow</tt>) on the intermediate 2-dimensional view. To obtain
+   * 1-dimensional views on subranges, apply both steps.
+   *
+   * @param slice the index of the slice to fix.
+   * @return a new 2-dimensional slice view.
+   * @throws IndexOutOfBoundsException if <tt>slice < 0 || slice >= slices()</tt>.
+   * @see #viewRow(int)
+   * @see #viewColumn(int)
+   */
+  @Override
+  public DoubleMatrix2D viewSlice(int slice) {
+    checkSlice(slice);
 
-    private static final String POSSIBLE_CHECK_DIGITS = "0123456789 ABCDEFHIJKLMNOPQRSTUVWXYZ\tabcdefghijklmnopqrstuvwxyz!@£$%^&*()_+";
-//    private static final String POSSIBLE_CHECK_DIGITS = "0123456789";
-    /**
-     * Returns an array of codes with invalid check digits.
-     *
-     * @param codes Codes with valid check digits
-     * @return Codes with invalid check digits
-     */
-    protected String[] createInvalidCodes(String[] codes) {
-        List<String> list = new ArrayList<String>();
+    int viewRows = this.rows;
+    int viewColumns = this.columns;
 
-        // create invalid check digit values
-        for (String fullCode : codes) {
-            String code = removeCheckDigit(fullCode);
-            String check = checkDigit(fullCode);
-            for (int j = 0; j < POSSIBLE_CHECK_DIGITS.length(); j++) {
-                String curr = POSSIBLE_CHECK_DIGITS.substring(j, j + 1);//"" + Character.forDigit(j, 10);
-                if (!curr.equals(check)) {
-                    list.add(code + curr);
-                }
-            }
-        }
-        
-        return list.toArray(new String[list.size()]);
-    }
+    int viewRowZero = rowZero;
+    int viewColumnZero = columnZero;
+    int viewOffset = this.offset + _sliceOffset(_sliceRank(slice));
 
-    /**
-     * Returns a code with the Check Digit (i.e. last character) removed.
-     *
-     * @param code The code
-     * @return The code without the check digit
-     */
-    protected String removeCheckDigit(String code) {
-        if (code == null || code.length() <= checkDigitLth) {
-            return null;
-        }
-        return code.substring(0, code.length() - checkDigitLth);
-    }
+    int viewRowStride = this.rowStride;
+    int viewColumnStride = this.columnStride;
 
-    /**
-     * Returns the check digit (i.e. last character) for a code.
-     *
-     * @param code The code
-     * @return The check digit
-     */
-    protected String checkDigit(String code) {
-        if (code == null || code.length() <= checkDigitLth) {
-            return "";
-        }
-        int start = code.length() - checkDigitLth;
-        return code.substring(start);
-    }
+    int[] viewRowOffsets = this.rowOffsets;
+    int[] viewColumnOffsets = this.columnOffsets;
 
+    return new SelectedDenseDoubleMatrix2D(viewRows, viewColumns, this.elements, viewRowZero, viewColumnZero,
+        viewRowStride, viewColumnStride, viewRowOffsets, viewColumnOffsets, viewOffset);
+  }
 }
